@@ -1,0 +1,13 @@
+name: orcvio-cov
+
+dependencies:
+  - python=3.8
+  - numpy=1.21.0
+  - scipy=1.7.0
+  - moderngl-window=2.4.0
+  - pyrr=0.10.3
+  - click=8.0.1
+  - transforms3d=0.3.1
+  - opencv
+  - moderngl=5.6.4
+  - pytest
