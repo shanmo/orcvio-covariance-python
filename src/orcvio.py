@@ -586,8 +586,8 @@ class ORCVIO():
             # prepare the basic terms 
             wRi = self.state.imu_R_global
             dt = imu.time_interval
-            acc_hat = imu.angular_vel - self.state.bias_gyro
-            gyro_hat = imu.linear_acc - self.state.bias_acc
+            gyro_hat = imu.angular_vel - self.state.bias_gyro
+            acc_hat = imu.linear_acc - self.state.bias_acc
 
             # predict the mean 
             self.integrate(dt, gyro_hat, acc_hat)

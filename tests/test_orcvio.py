@@ -27,17 +27,13 @@ def setup_orcvio():
 
 
 def test_orcvio_imu_integration():
-
     orcvio = setup_orcvio()
 
     # Constant linear acceleration
-
     linear_acceleration = 0.3
     gravity = 9.81
-
     acc_measurement = np.array([linear_acceleration, 0, gravity])
     gyro_meas = np.zeros((3, ))
-
     dt = 1.0
 
     data = IMUData(acc_measurement, gyro_meas, 0, dt)
@@ -55,18 +51,13 @@ def test_orcvio_imu_integration():
 
     assert (np.allclose(expected_translation, orcvio.state.global_t_imu))
     assert (np.allclose(expected_velocity, orcvio.state.velocity))
-
     # Orientation should not change as no gyro measurement
-    assert (np.allclose(np.eye(3)), orcvio.state.imu_R_global)
+    assert (np.allclose(np.eye(3), orcvio.state.imu_R_global))
 
     orcvio = setup_orcvio()
-
     imu_buffer.append(data)
-
     orcvio.propagate(imu_buffer)
-
     new_x = expected_translation_x + expected_velocity_x * dt + linear_acceleration * dt**2 / 2
-
     assert (np.allclose(np.array([new_x, 0, 0]), orcvio.state.global_t_imu))
 
 
@@ -79,10 +70,9 @@ def test_constant_angular_velocity():
     gyro = np.array([0, 0, angular_velocity])
 
     dt = 1.0
-
-    data = IMUData(accel, gyro, 0, dt)
-
-    orcvio.integrate(data)
+    gyro_hat = gyro - orcvio.state.bias_gyro
+    accel_hat = accel - orcvio.state.bias_acc
+    orcvio.integrate(dt, gyro_hat, accel_hat)
 
     final_w = np.cos(angular_velocity * dt / 2)
     final_z = np.sin(angular_velocity * dt / 2)
@@ -203,12 +193,12 @@ def test_residual_and_jacobian():
     orcvio.state.covariance[-6:, -6:] = np.eye(6) * 10
     print("Clones before")
     for clone in orcvio.state.clones.values():
-        print(clone.camera_JPLPose_global)
+        print(clone.camera_pose_global)
     orcvio.update_EKF(r_o, H_o, R)
 
     print("Clones after")
     for clone in orcvio.state.clones.values():
-        print(clone.camera_JPLPose_global.t)
+        print(clone.camera_pose_global.t)
 
     after_update = orcvio.state.global_t_imu
     print(after_update)
