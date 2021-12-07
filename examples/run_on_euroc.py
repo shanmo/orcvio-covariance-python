@@ -21,11 +21,10 @@ RIGHT_CAMERA_FOLDER = "cam1"
 IMU_FOLDER = "imu0"
 GT_FOLDER = "state_groundtruth_estimate0"
 DATA_FILE = "data.csv"
+RESULT_FILE = "./cache/msckf/"
 
 TIMESTAMP_INDEX = 0
-
 NANOSECOND_TO_SECOND = 1e-9
-
 # Euroc fastest running sensor is the IMU at about 200 hz or 0.005 seconds.(Not exact). This is the actual value in
 # nanoseconds.
 EUROC_DELTA_TIME = 5000192
@@ -41,8 +40,8 @@ levels = {
 
 
 @click.command()
-@click.option('--euroc_folder', required=True, help="Path to a folder containing Euroc data. Typically called mav0")
-@click.option('--start_timestamp', required=True, help="Timestamp of where we want to start reading data from.")
+@click.option('--euroc_folder', required=False, default="/mnt/disk2/euroc/MH_02_easy/mav0", help="Path to a folder containing Euroc data. Typically called mav0")
+@click.option('--start_timestamp', required=False, default="1403636896901666560", help="Timestamp of where we want to start reading data from.")
 @click.option('--use_viewer', is_flag=True, help="Use a 3D viwer to view the camera path")
 @click.option('--log_level', required=False, default="debug", help="Level of python logging messages")
 def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
@@ -87,6 +86,8 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
         ground_truth_queue = Queue()
         viewer_process = Process(target=create_and_run, args=(est_pose_queue, ground_truth_queue))
         viewer_process.start()
+    # for covariance analysis 
+    covariance_queue = []
 
     while time_syncer.has_data():
 
@@ -138,6 +139,8 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
             est_pose[0:3, 3] = est_trans
             if est_pose_queue:
                 est_pose_queue.put(est_pose)
+            # for covariance analysis 
+            covariance_queue.append(msckf.state.get_pos_covariance())
             msckf.remove_old_clones()
             imu_buffer.clear()
 
@@ -153,6 +156,8 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
                 gt_transform[0:3, 3] = gt_pos
                 ground_truth_queue.put(gt_transform)
 
+    # for covariance analysis 
+    np.savez(RESULT_FILE + 'covariances.npz', covariance_queue)
 
 if __name__ == '__main__':
     run_on_euroc()

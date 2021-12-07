@@ -56,7 +56,6 @@ class TimestampSynchronizer():
 
         self.start_timestamp = None
         self.end_timestamp = None
-
         self.current_timestamp = None
 
         # Set the maximum dt allowed to consider 2 timestamps to be equal.
@@ -107,10 +106,7 @@ class TimestampSynchronizer():
 
     def get_current_minimum_timestamp(self):
         """Check our various timestamp streams and return whichever has the lowest value.
-
         Returns:
-
-
         """
         min_timestamp = sys.float_info.max
         for timestamp_index in self.timestamps_dict.values():

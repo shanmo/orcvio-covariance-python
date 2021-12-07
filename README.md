@@ -10,7 +10,9 @@ This repo is developed for analyzing the covariance for [OrcVIO](https://moshan.
 ## EuRoC demo 
 
 - setup python path 
-`export PYTHONPATH="${PYTHONPATH}:/home/erl/orcvio/orcvio-covariance-python"`
+```
+export PYTHONPATH="${PYTHONPATH}:/home/erl/orcvio/orcvio-covariance-python"
+```
 - perform tests 
 ```
 python ./tests/test_msckf.py
@@ -19,7 +21,9 @@ python ./tests/test_triangulation.py
 python ./tests/test_twopoint_ransac.py
 ```
 - run demo on euroc MH02 easy 
-`python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav0 --use_viewer --start_timestamp 1403636896901666560`
+```
+python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav0 --use_viewer --start_timestamp 1403636896901666560
+```
 
 ## references 
 

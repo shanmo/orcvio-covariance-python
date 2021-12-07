@@ -55,9 +55,6 @@ class State():
     amount of Camera State Stochastic Clones. These clones contain the position and attitude of the camera at some
     timestamp in the past. They are what allow us to define EKF Update functions linking the past poses to our current
     pose.
-
-
-
     """
     def __init__(self):
 
@@ -69,11 +66,8 @@ class State():
 
         # Velocity of the IMU
         self.velocity = np.zeros((3, ), dtype=np.float64)
-
         self.bias_gyro = np.zeros((3, ), dtype=np.float64)
-
         self.bias_acc = np.zeros((3, ), dtype=np.float64)
-
         self.clones = OrderedDict()
 
         # The covariance matrix of our state.
@@ -145,9 +139,12 @@ class State():
         return StateInfo.IMU_STATE_SIZE + self.num_clones() * StateInfo.CLONE_STATE_SIZE
 
     def print_state(self):
-
         print("Position {}", self.global_t_imu)
 
+    def get_pos_covariance(self): 
+        """Obtain the covariance for position 
+        """
+        return np.copy(self.covariance[3:6, 3:6])
 
 class MSCKF():
     """ Implements the Multi-Constraint Kalman filter(MSCKF) for visual inertial odometry.
