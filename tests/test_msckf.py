@@ -247,3 +247,10 @@ def test_residual_and_jacobian():
     print(after_update)
 
     assert (np.allclose(before_update, after_update))
+
+if __name__ == "__main__": 
+    test_msckf_imu_integration()
+    test_constant_angular_velocity()
+    test_state_augmentation()
+    test_state_augmentation_non_origin()
+    test_residual_and_jacobian()
