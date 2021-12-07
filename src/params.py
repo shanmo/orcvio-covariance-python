@@ -121,7 +121,7 @@ class AlgorithmConfig():
         use_QR_compression = True
 
     feature_tracker_params: FeatureTrackerParams = FeatureTrackerParams()
-    msckf_params: ORCVIOParams = ORCVIOParams()
+    orcvio_params: ORCVIOParams = ORCVIOParams()
 
 
 @dataclass()

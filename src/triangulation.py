@@ -5,8 +5,6 @@ Implements various methods to triangulate a 3D point given 2D observations from 
 import numpy as np
 from scipy.optimize import least_squares
 
-from src.spatial_transformations import JPLPose
-
 MEASUREMENT_SIZE = 2
 
 
@@ -166,7 +164,7 @@ def model(estimated_inverse_depth_pt, camera_poses_world, measurements):
     Args:
         estimated_inverse_depth_pt: Current estimate of landmark in the inverse depth format.
         camera_poses_world: List of camera poses that observed this Landmark in SE(3).
-        measurements: List of normalized keypoint measurement. Same length as 'camera_JPLPoses_world'
+        measurements: List of normalized keypoint measurement. Same length as 'camera_poses_world'
 
     Returns:
         The residuals or error of the current estimate(landmark) given the observations(measurements)

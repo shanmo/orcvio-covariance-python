@@ -637,15 +637,15 @@ class ORCVIO():
             # obtain Q 
             Q = Phi @ self.noise_matrix @ Phi.T * dt
 
-            self.state_server.state_cov[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] = (
-                Phi @ self.state_server.state_cov[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] @ Phi.T + Q)
+            self.state.covariance[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] = (
+                Phi @ self.state.covariance[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] @ Phi.T + Q)
 
             # Update the imu-camera covariance
-            self.state.covariance[0:15, 15:] = (Phi @ self.state.covariance[0:15, 15:])
-            self.state.covariance[15:, :15] = (self.state.covariance[15:, :15] @ Phi.T)
+            self.state.covariance[0:StateInfo.IMU_STATE_SIZE, StateInfo.IMU_STATE_SIZE:] = (Phi @ self.state.covariance[0:15, 15:])
+            self.state.covariance[StateInfo.IMU_STATE_SIZE:, :StateInfo.IMU_STATE_SIZE] = (self.state.covariance[StateInfo.IMU_STATE_SIZE:, :StateInfo.IMU_STATE_SIZE] @ Phi.T)
 
-            new_cov_symmetric = symmeterize_matrix(self.state.covariance)
-            self.state.covariance[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] = new_cov_symmetric
+            self.state.covariance = symmeterize_matrix(self.state.covariance)
+
 
     def update_EKF(self, res, H, R):
         """

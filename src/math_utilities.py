@@ -4,6 +4,9 @@ def skew(vec):
     """
     Create a skew-symmetric matrix from a 3-element vector.
     """
+    vec = np.squeeze(vec)
+    if vec.size != 3:
+        raise TypeError("Input size to skew operator must be 3")
     x, y, z = vec
     return np.array([
         [0, -z, y],
