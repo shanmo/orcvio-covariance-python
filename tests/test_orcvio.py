@@ -57,7 +57,7 @@ def test_orcvio_imu_integration():
     assert (np.allclose(expected_velocity, orcvio.state.velocity))
 
     # Orientation should not change as no gyro measurement
-    assert (np.allclose(np.eye(3)), orcvio.state.imu_R_global))
+    assert (np.allclose(np.eye(3)), orcvio.state.imu_R_global)
 
     orcvio = setup_orcvio()
 
