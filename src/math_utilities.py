@@ -1,29 +1,14 @@
 import numpy as np
 
-
-def normalize(vector):
-    return vector / np.linalg.norm(vector)
-
-
-def skew_matrix(vec3):
-    """Convert a 3x1 vector into a symmetric skew matrix.
-
-    Args:
-        vec3: numpy array representing a 3x1 vector
-
-    Returns:
-        A 3x3 numpy array
-
-    The skew symmetric matrix has several different meanings depending on the context. For instance it can be used
-    as a substitute for the cross product
-        a x b = skew_matrix(a)*b
-
-    It is also useful in converting a vector into a rotation matrix. See the Rodrigues formula.
+def skew(vec):
     """
-    if vec3.size != 3:
-        raise TypeError("Numpy array must have size == 3")
-    return np.array([[0, -vec3[2], vec3[1]], [vec3[2], 0, -vec3[0]], [-vec3[1], vec3[0], 0]], dtype=np.float64)
-
+    Create a skew-symmetric matrix from a 3-element vector.
+    """
+    x, y, z = vec
+    return np.array([
+        [0, -z, y],
+        [z, 0, -x],
+        [-y, x, 0]])
 
 def symmeterize_matrix(matrix):
     """Makes sure that the matrix is symmetric along the diagonal.
@@ -42,3 +27,65 @@ def symmeterize_matrix(matrix):
     if matrix.shape[0] != matrix.shape[1]:
         raise TypeError("Matrix must be square(equal rows and columns)")
     return (matrix + matrix.T) / 2
+
+def odotOperator(ph):
+    '''
+    @Input:
+      ph = n x 4 = points in homogeneous coordinates
+    @Output:
+    odot(ph) = n x 4 x 6
+    '''
+
+    zz = np.zeros(ph.shape + (6,))
+    zz[...,:3,3:6] = -skew(ph[...,:3])
+    zz[...,0,0],zz[...,1,1],zz[...,2,2] = ph[...,3],ph[...,3],ph[...,3]
+
+    return zz
+
+def Hl_operator(omega):
+    """
+    implements Hl operator in eq 20 
+    """
+
+    omega_norm = np.linalg.norm(omega) 
+
+    term1 = (1/2)*np.eye(3)
+
+    if (omega_norm < 1.0e-5):
+        return term1 
+
+    term2 = np.nan_to_num((omega_norm - np.sin(omega_norm)) / (omega_norm**3)) * skew(omega)
+    term3 = np.nan_to_num((2*(np.cos(omega_norm) - 1) + (omega_norm**2)) / (2*(omega_norm**4))) * (skew(omega) @ skew(omega))
+
+    Hl = term1 + term2 + term3 
+    
+    return Hl
+
+def Jl_operator(omega):
+    """
+    implements Jl operator in eq 20 
+    """
+
+    omega_norm = np.linalg.norm(omega) 
+
+    term1 = np.eye(3)
+
+    if (omega_norm < 1.0e-5):
+        return term1 
+
+    term2 = np.nan_to_num((1 - np.cos(omega_norm)) / (omega_norm**2)) * skew(omega)
+    term3 = np.nan_to_num((omega_norm - np.sin(omega_norm)) / (omega_norm**3)) * (skew(omega) @ skew(omega))
+
+    Jl = term1 + term2 + term3
+
+    return Jl
+
+def get_cam_wrt_imu_se3_jacobian(cRi, iPc, cRw):
+
+    p_cxi_p_ixi = np.zeros((6, 6))
+
+    p_cxi_p_ixi[0:3, 0:3] = -1 * cRi @ skew(iPc)
+    p_cxi_p_ixi[3:6, 0:3] = cRi
+    p_cxi_p_ixi[0:3, 3:6] = cRw
+
+    return p_cxi_p_ixi

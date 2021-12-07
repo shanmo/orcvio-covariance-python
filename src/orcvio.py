@@ -3,16 +3,14 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum, auto
 from math import sqrt
+import sophus as sp
 
 import numpy as np
 import scipy
 from scipy.stats import chi2
 
-from src.jpl_quat_ops import JPLQuaternion, jpl_error_quat, jpl_omega
-from src.math_utilities import normalize, skew_matrix, symmeterize_matrix
-from src.msckf_types import FeatureTrack
-from src.params import AlgorithmConfig
-from src.spatial_transformations import JPLPose
+from src.math_utilities import skew, symmeterize_matrix, odotOperator, Hl_operator, Jl_operator, get_cam_wrt_imu_se3_jacobian
+from src.orcvio_types import FeatureTrack
 from src.triangulation import linear_triangulate, optimize_point_location
 
 logger = logging.getLogger(__name__)
@@ -23,26 +21,25 @@ class StateInfo():
 
     # Represents the indexing of the individual components  of the state vector.
     # The slice(a,b) class just represents a python slice [a:b]
-
-    # Attitude, since we are storing the error state the size is 3 rather than the 4 required for the quaternion.
+    # R, v, p, bg, ba 
     ATT_SLICE = slice(0, 3)
-    POS_SLICE = slice(3, 6)  # Position
-    VEL_SLICE = slice(6, 9)  # Velocity
+    VEL_SLICE = slice(3, 6)  # Velocity
+    POS_SLICE = slice(6, 9)  # Position
     BG_SLICE = slice(9, 12)  # Bias gyro
     BA_SLICE = slice(12, 15)  # Bias accelerometer
 
     IMU_STATE_SIZE = 15  # Size of the imu state(the above 5 slices)
 
     CLONE_START_INDEX = 15  # Index at which the camera clones start
-    CLONE_STATE_SIZE = 6  # Size of the camera clone state(3 for attitude, 3 for position)
+    CLONE_STATE_SIZE = 6  # Size of the camera clone state(se3)
 
-    CLONE_ATT_SLICE = slice(0, 3)  # Where within the camera clone the attitude error state is
-    CLONE_POS_SLICE = slice(3, 6)  # Where within the camera clone the position error is
+    CLONE_SE3_SLICE = slice(0, 6)  # Where within the camera clone the se3 error state is
 
 
 class CameraClone():
-    def __init__(self, camera_JPLPose_global, camera_id):
-        self.camera_JPLPose_global = camera_JPLPose_global
+    def __init__(self, R, t, camera_id):
+        self.camera_pose_global.R = R 
+        self.camera_pose_global.t = t
         self.timestamp = 0
         self.camera_id = camera_id
 
@@ -58,8 +55,9 @@ class State():
     """
     def __init__(self):
 
-        # Attitude of the camera. Stores the rotation of the IMU to the global frame as a JPL quaternion.
-        self.imu_JPLQ_global = JPLQuaternion.identity()
+        # Attitude of the IMU. 
+        # Stores the rotation of the IMU to the global frame as SO(3).
+        self.imu_R_global = np.eye(3)
 
         # Position of the IMU in the global frame.
         self.global_t_imu = np.zeros((3, ), dtype=np.float64)
@@ -99,8 +97,6 @@ class State():
 
         Args:
             delta_x: Numpy vector. Has length equal to the error state vector.
-
-
         """
         assert (delta_x.shape[0] == self.get_state_size())
 
@@ -113,27 +109,21 @@ class State():
         self.bias_acc += delta_x[StateInfo.BA_SLICE]
 
         # Attitude requires a special Quaternion update
-        # Note because we are using the left jacobians the update needs to be applied from the left side.
-        error_quat = JPLQuaternion.from_array(jpl_error_quat(delta_x[StateInfo.ATT_SLICE]))
-        self.imu_JPLQ_global = error_quat.multiply(self.imu_JPLQ_global)
+        # Note because we are using the right jacobians the update needs to be applied from the right side.
+        self.imu_R_global = self.imu_R_global @ sp.SO3.exp(delta_x[StateInfo.ATT_SLICE]).matrix()
 
         # Now do same thing for the rest of the clones
 
         for idx, clone in enumerate(self.clones.values()):
 
             delta_x_index = StateInfo.IMU_STATE_SIZE + idx * StateInfo.CLONE_STATE_SIZE
-
-            # Position update
-            pos_start_index = delta_x_index + StateInfo.CLONE_POS_SLICE.start
-            pos_end_index = delta_x_index + StateInfo.CLONE_POS_SLICE.stop
-            clone.camera_JPLPose_global.t += delta_x[pos_start_index:pos_end_index]
-
-            # Attitude update
-            att_start_index = delta_x_index + StateInfo.CLONE_ATT_SLICE.start
-            att_end_index = delta_x_index + StateInfo.CLONE_ATT_SLICE.stop
-            delta_x_slice = delta_x[att_start_index:att_end_index]
-            error_quat = JPLQuaternion.from_array(jpl_error_quat(delta_x_slice))
-            clone.camera_JPLPose_global.q = error_quat.multiply(clone.camera_JPLPose_global.q)
+            se3_start_index = delta_x_index + StateInfo.CLONE_SE3_SLICE.start
+            se3_end_index = delta_x_index + StateInfo.CLONE_SE3_SLICE.stop
+            delta_x_slice = delta_x[se3_start_index:se3_end_index]
+            delta_wTc = sp.SE3.exp(delta_x_slice).matrix()
+            delta_wTc = np.squeeze(delta_wTc)
+            clone.camera_pose_global.t += np.squeeze(clone.camera_pose_global.R @ delta_wTc[:3,3])
+            clone.camera_pose_global.R = clone.camera_pose_global.R @ delta_wTc[:3,:3]
 
     def get_state_size(self):
         return StateInfo.IMU_STATE_SIZE + self.num_clones() * StateInfo.CLONE_STATE_SIZE
@@ -146,12 +136,8 @@ class State():
         """
         return np.copy(self.covariance[3:6, 3:6])
 
-class MSCKF():
-    """ Implements the Multi-Constraint Kalman filter(MSCKF) for visual inertial odometry.
-
-    This implements the MSCKF first seen in A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint Kalman Filter
-     for Vision-Aided Inertial Navigation". It is a tightly coupled EKF based approach to solving the visual inertial
-     odometry problem.
+class ORCVIO():
+    """ Implements the ORCVIO.
     """
     def __init__(self, params, camera_calibration):
         self.state = State()
@@ -161,7 +147,7 @@ class MSCKF():
         self.camera_id = 0
         self.camera_calib = camera_calibration
         self.gravity = np.array([0, 0, -9.81])
-        self.noise_matrix = np.eye(4 * 3)
+        self.noise_matrix = np.eye(15)
         self.chi_square_val = {}
         for i in range(1, 100):
             self.chi_square_val[i] = chi2.ppf(0.05, i)
@@ -180,23 +166,13 @@ class MSCKF():
         mean and how they can be found.
         """
         # Since it is the standard deviation we need to square the variable for the variance.
-        values = np.array([[sigma_gyro**2, sigma_gyro**2, sigma_gyro**2], [sigma_acc**2, sigma_acc**2, sigma_acc**2],
-                           [sigma_gyro_bias**2, sigma_gyro_bias**2, sigma_gyro_bias**2],
-                           [sigma_acc_bias**2, sigma_acc_bias**2, sigma_acc_bias**2]])
-        diag = np.eye(4 * 3, dtype=np.float64)
-        np.fill_diagonal(diag, values)
-        self.noise_matrix = diag
+        self.noise_matrix[:3, :3] = np.eye(3) * sigma_gyro**2
+        self.noise_matrix[3:6, 3:6] = np.eye(3) * sigma_acc**2
+        self.noise_matrix[9:12, 9:12] = np.eye(3) * sigma_gyro_bias**2
+        self.noise_matrix[12:15, 12:15] = np.eye(3) * sigma_acc_bias**2
 
     def initialize(self, global_R_imu, global_t_imu, vel, bias_acc, bias_gyro):
-        self.state.imu_JPLQ_global = JPLQuaternion.from_rot_mat(global_R_imu.T)
-        self.state.global_t_imu = global_t_imu
-        new_vel = global_R_imu.T @ vel
-        self.state.velocity = new_vel
-        self.state.bias_acc = bias_acc
-        self.state.bias_gyro = bias_gyro
-
-    def initialize2(self, quat, global_t_imu, vel, bias_acc, bias_gyro):
-        self.state.imu_JPLQ_global = JPLQuaternion.from_array(quat)
+        self.state.imu_R_global = global_R_imu
         self.state.global_t_imu = global_t_imu
         self.state.velocity = vel
         self.state.bias_acc = bias_acc
@@ -228,16 +204,12 @@ class MSCKF():
         arr[st.BA_SLICE] = bias_acc_var
         np.fill_diagonal(cov, arr)
 
-    def propogate_and_update_msckf(self, imu_buffer, feature_ids, normalized_keypoints):
-        pass
-
     def remove_old_clones(self):
         """Remove old camera clones from the state vector.
 
         In order to keep our computation bounded we remove certain camera clones from our state vector. In this
         implementation we implement a basic sliding window which always removes the oldest camera clone. This way our
         state vector is kept to a constant size.
-
         """
 
         num_clones = self.state.num_clones()
@@ -250,13 +222,13 @@ class MSCKF():
         ids_to_remove = []
         oldest_camera_id = list(self.state.clones.keys())[0]
 
-        # Run the MSCKF update on any features which have this clone
+        # Run the update on any features which have this clone
         for id, track in self.map_id_to_feature_tracks.items():
             track_cam_id = track.camera_ids[0]
             if track_cam_id == oldest_camera_id:
                 ids_to_remove.append(id)
 
-        self.msckf_update(ids_to_remove)
+        self.update(ids_to_remove)
 
         # Remove the clone from the state vector
 
@@ -274,13 +246,11 @@ class MSCKF():
 
     def add_camera_features(self, feature_ids, normalized_keypoints):
         """
-
         Args:
             feature_ids:
             normalized_keypoints:
 
         Returns:
-
         """
         mature_feature_ids = []
         newest_clone_id = self.augment_camera_state(0)
@@ -303,7 +273,7 @@ class MSCKF():
                 lost_feature_ids.append(id)
 
         ids_to_update = mature_feature_ids + lost_feature_ids
-        self.msckf_update(ids_to_update)
+        self.update(ids_to_update)
 
     def check_feature_motion(self, id, min_motion_dist=0.05, use_orthogonal_dist=False):
         """Check if the camera poses observing the feature has sufficient displacement between them.
@@ -328,8 +298,8 @@ class MSCKF():
             first_camera_pose = self.state.clones[track.camera_ids[0]]
             second_camera_pose = self.state.clones[track.camera_ids[-1]]
 
-            global_t_camera1 = first_camera_pose.camera_JPLPose_global.t
-            global_t_camera2 = second_camera_pose.camera_JPLPose_global.t
+            global_t_camera1 = first_camera_pose.camera_pose_global.t
+            global_t_camera2 = second_camera_pose.camera_pose_global.t
 
             if np.linalg.norm(global_t_camera1 - global_t_camera2) > min_motion_dist:
                 return True
@@ -337,23 +307,22 @@ class MSCKF():
         else:
             first_camera_pose = self.state.clones[track.camera_ids[0]]
 
-            global_R_camera1 = first_camera_pose.camera_JPLPose_global.q.rotation_matrix().T
+            global_R_camera1 = first_camera_pose.camera_pose_global.R
             feature_vec = np.append(track.tracked_keypoints[0], 1)
             bearing_vec_camera = feature_vec / np.linalg.norm(feature_vec)
             bearing_in_global = global_R_camera1 * bearing_vec_camera
 
             for idx in range(1, len(track.camera_ids)):
                 clone = self.state.clones[track.camera_ids[idx]]
-                global_R_camera = clone.camera_JPLPose_global.q.rotation_matrix().T
-                trans = clone.camera_JPLPose_global.t - first_camera_pose.camera_JPLPose_global.t
+                trans = clone.camera_pose_global.t - first_camera_pose.camera_pose_global.t
                 parallel_trans = trans.T @ bearing_in_global
                 ortho_trans = trans - parallel_trans @ bearing_in_global
                 if np.linalg.norm(ortho_trans) > 0.05:
                     return True
             return False
 
-    def msckf_update(self, ids):
-        """Starts the msckf update process given a list of features.
+    def update(self, ids):
+        """Starts the update process given a list of features.
 
         Args:
             ids: List of track ids we want to use for the msckf update.
@@ -369,7 +338,7 @@ class MSCKF():
         for id in ids:
             track = self.map_id_to_feature_tracks[id]
 
-            # Check if the track has enough keypoints to justify the expense of a MSCKF update.
+            # Check if the track has enough keypoints to justify the expense of an update.
             if len(track.tracked_keypoints) < self.params.min_track_length_for_update:
                 min_track_removed += 1
                 continue
@@ -377,20 +346,19 @@ class MSCKF():
             if not self.check_feature_motion(id):
                 bad_motion_removed += 1
                 continue
-            camera_JPLPose_world_list = []
+            camera_pose_world_list = []
             # Landmark is good so triangulate it.
             for cam_id in track.camera_ids:
                 clone = self.state.clones[cam_id]
-                #assert (clone.camera_id == track.camera_ids[idx])
-                camera_JPLPose_world_list.append(clone.camera_JPLPose_global)
+                camera_pose_world_list.append(clone.camera_pose_global)
 
-            is_valid, triangulated_pt = linear_triangulate(camera_JPLPose_world_list, track.tracked_keypoints)
+            is_valid, triangulated_pt = linear_triangulate(camera_pose_world_list, track.tracked_keypoints)
 
             if not is_valid:
                 bad_triangulation += 1
                 continue
 
-            is_valid, optimized_pt = optimize_point_location(triangulated_pt, camera_JPLPose_world_list,
+            is_valid, optimized_pt = optimize_point_location(triangulated_pt, camera_pose_world_list,
                                                              track.tracked_keypoints)
 
             if not is_valid:
@@ -428,7 +396,6 @@ class MSCKF():
         residuals = np.empty((2 * num_measurements, ), dtype=np.float64)
 
         actual_measurement_count = 0
-        last_cam_id = -1
         for idx in range(num_measurements):
             cam_id = track.camera_ids[idx]
             measurement = track.tracked_keypoints[idx]
@@ -444,15 +411,15 @@ class MSCKF():
             if clone_index == None:
                 continue
             clone = self.state.clones[cam_id]
-            camera_R_global = clone.camera_JPLPose_global.q.rotation_matrix()
-            camera_t_global = camera_R_global @ -clone.camera_JPLPose_global.t
+            cRw = clone.camera_pose_global.R.T
+            cPw = cRw @ -clone.camera_pose_global.t
 
-            pt_camera = camera_R_global @ pt_global + camera_t_global
+            pt_camera = cRw @ pt_global + cPw
             # The actual measurement index. Needed if one of the camera clones is invalid.
             m_idx = actual_measurement_count
             # This slice corresponds to the rows that relate to this measurement.
             measurement_slice = slice(2 * m_idx, 2 * m_idx + 2)
-            #Compute and set the residuals
+            # Compute and set the residuals
             normalized_x = pt_camera[0] / pt_camera[2]
             normalized_y = pt_camera[1] / pt_camera[2]
             error = np.array([measurement[0] - normalized_x, measurement[1] - normalized_y])
@@ -466,24 +433,22 @@ class MSCKF():
             invZ = 1.0 / pt_camera[2]
             jac_i = invZ * np.array([[1.0, 0.0, -X * invZ], [0.0, 1.0, -Y * invZ]])
 
-            H_f[measurement_slice] = jac_i @ camera_R_global
+            H_f[measurement_slice] = jac_i @ cRw
 
             # Compute jacobian with respect to the current camera clone
-            # Eq 22 in the tech report
-            jac_attitude = jac_i @ skew_matrix(pt_camera)
-            jac_position = -jac_i @ camera_R_global
+            temp_mat = np.zeros((3, 4))
+            temp_mat[:3, :3] = np.eye(3)
+            X_prime, Y_prime, Z_prime = pt_camera[0], pt_camera[1], pt_camera[2]
+            uline_l0 = np.array([X_prime, Y_prime, Z_prime, 1])
+            dpc0_dxc = -1 * temp_mat @ odotOperator(uline_l0)
+            jac_se3 = jac_i @ dpc0_dxc
 
             # Get the index of the current clone within the state vector. As we need to set their computed jacobians
             clone_state_index = self.state.calc_clone_index(clone_index)
 
-            att_start_index = clone_state_index + StateInfo.CLONE_ATT_SLICE.start
-            att_end_index = clone_state_index + StateInfo.CLONE_ATT_SLICE.stop
-            # Reads as the partial derivatives(jacobians) of the measurement with respect to the clone attitude.
-            H_X[measurement_slice, att_start_index:att_end_index] = jac_attitude
-
-            pos_start_index = clone_state_index + StateInfo.CLONE_POS_SLICE.start
-            pos_end_index = clone_state_index + StateInfo.CLONE_POS_SLICE.stop
-            H_X[measurement_slice, pos_start_index:pos_end_index] = jac_position
+            se3_start_index = clone_state_index + StateInfo.CLONE_SE3_SLICE.start
+            se3_end_index = clone_state_index + StateInfo.CLONE_SE3_SLICE.stop
+            H_X[measurement_slice, se3_start_index:se3_end_index] = jac_se3
 
             actual_measurement_count += 1
 
@@ -595,113 +560,91 @@ class MSCKF():
         np.fill_diagonal(R, self.params.keypoint_noise_sigma**2)
         self.update_EKF(final_r, final_H, R)
 
-    def residualize(self, track):
-        camera_JPLPose_world_list = []
+    def integrate(self, dt, omega, acc):
+        R = self.state.imu_R_global
+        p = self.state.global_t_imu
+        v = self.state.velocity
 
-        num_measurements = len(track.camera_ids)
+        # update position 
+        Hl = Hl_operator(dt*omega)
+        p_new = p + dt*v + self.gravity*((dt**2)/2) + R @ Hl @ acc * (dt**2)
 
-        for cam_id in track.camera_ids:
-            clone = self.state.clones[cam_id]
-            assert (clone.camera_id == track.camera_ids[idx])
-            camera_JPLPose_world_list.append(clone.camera_JPLPose_global)
+        # update velocity 
+        Jl = Jl_operator(dt*omega)
+        v_new = v + self.gravity*dt + R @ Jl @ acc * dt
 
-        is_valid, triangulated_pt = linear_triangulate_point(camera_JPLPose_world_list, track.track_keypoints)
+        # update rotation
+        delta_R = sp.SO3.exp(dt*omega).matrix()
+        R_new = R @ delta_R
 
-        if not is_valid:
-            return False
-
-        optimized_pt = optimize_point_location(triangulated_pt, camera_JPLPose_world_list, track.track_keypoints)
-
-    def integrate(self, imu_measurement):
-        dt = imu_measurement.time_interval
-        unbiased_gyro = imu_measurement.angular_vel - self.state.bias_gyro
-        unbiased_acc = imu_measurement.linear_acc - self.state.bias_acc
-
-        gyro_norm = np.linalg.norm(unbiased_gyro)
-
-        q0 = self.state.imu_JPLQ_global
-        p0 = self.state.global_t_imu
-        v0 = self.state.velocity
-
-        omega = jpl_omega(unbiased_gyro)
-
-        if (gyro_norm > 1e-5):
-            dq_dt_arr = (np.cos(gyro_norm * dt * 0.5) * np.eye(4) +
-                         1 / gyro_norm * np.sin(gyro_norm * dt * 0.5) * omega) @ q0.q
-            dq_dt2_arr = (np.cos(gyro_norm * dt * 0.25) * np.eye(4) +
-                          1 / gyro_norm * np.sin(gyro_norm * dt * 0.25) * omega) @ q0.q
-        else:
-            dq_dt_arr = (np.eye(4) + 0.5 * dt * omega) * np.cos(gyro_norm * dt * 0.5) @ q0.q
-            dq_dt2_arr = (np.eye(4) + 0.25 * dt * omega) * np.cos(gyro_norm * dt * 0.25) @ q0.q
-
-        dR_dt_transpose = JPLQuaternion.from_array(dq_dt_arr).rotation_matrix().T
-        dR_dt2_transpose = JPLQuaternion.from_array(dq_dt2_arr).rotation_matrix().T
-
-        k1_v_dot = q0.rotation_matrix().T @ unbiased_acc + self.gravity
-
-        k1_p_dot = v0
-
-        # k2 = f(tn + dt / 2, yn + k1 * dt / 2)
-        k1_v = v0 + k1_v_dot * dt / 2
-        k2_v_dot = dR_dt2_transpose @ unbiased_acc + self.gravity
-
-        k2_p_dot = k1_v
-
-        # k3 = f(tn + dt / 2, yn + k2 * dt / 2)
-
-        k2_v = v0 + k2_v_dot * dt / 2
-        k3_v_dot = dR_dt2_transpose @ unbiased_acc + self.gravity
-        k3_p_dot = k2_v
-
-        # k4 = f(tn + dt, yn + k3 * dt)
-        k3_v = v0 + k3_v_dot * dt
-        k4_v_dot = dR_dt_transpose @ unbiased_acc + self.gravity
-        k4_p_dot = k3_v
-
-        # yn + 1 = yn + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-        #        q = dq_dt
-        v = v0 + dt / 6 * (k1_v_dot + 2 * k2_v_dot + 2 * k3_v_dot + k4_v_dot)
-        p = p0 + dt / 6 * (k1_p_dot + 2 * k2_p_dot + 2 * k3_p_dot + k4_p_dot)
-
-        self.state.imu_JPLQ_global = JPLQuaternion.from_array(dq_dt_arr)
-        self.state.global_t_imu = p
-        self.state.velocity = v
+        self.state.imu_R_global = R_new
+        self.state.global_t_imu = p_new
+        self.state.velocity = v_new
 
     def propogate(self, imu_buffer):
-
         for imu in imu_buffer:
-            F = self.compute_F(imu)
-            G = self.compute_G()
-            self.integrate(imu)
+            # prepare the basic terms 
+            wRi = self.state.imu_R_global
+            dt = imu.time_interval
+            acc_hat = imu.angular_vel - self.state.bias_gyro
+            gyro_hat = imu.linear_acc - self.state.bias_acc
 
-            Phi = None
-            transition_method = AlgorithmConfig.MSCKFParams.StateTransitionIntegrationMethod
-            if self.params.state_transition_integration == transition_method.Euler:
-                Phi = np.eye(15) + F * imu.time_interval
-            elif self.params.state_transition_integration == transition_method.truncation_3rd_order:
-                Fdt = F * imu.time_interval
-                Fdt2 = Fdt @ Fdt
-                Fdt3 = Fdt2 @ Fdt
-                Phi = np.eye(15) + Fdt + 0.5 * Fdt2 + 1.0 / 6.0 * Fdt3
-            elif self.params.state_transition_integration == transition_method.matrix_exponent:
-                Fdt = F * imu.time_interval
-                Phi = scipy.linalg.expm(Fdt)
+            # predict the mean 
+            self.integrate(dt, gyro_hat, acc_hat)
 
-            imu_covar = self.state.covariance[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE]
+            a_skew = skew(acc_hat)
+            g_skew = skew(gyro_hat)
+            g_norm = np.linalg.norm(gyro_hat)
 
-            transition_model = self.params.transition_matrix_method
-            if transition_model == AlgorithmConfig.MSCKFParams.TransitionMatrixModel.continous_discrete:
-                Q = G @ self.noise_matrix @ G.T * imu.time_interval
-                new_covariance = Phi @ (imu_covar + Q) @ Phi.T
-            else:
-                Q = G @ self.noise_matrix @ G.T * imu.time_interval
-                new_covariance = Phi @ imu_covar @ Phi.T + Q
+            # make sure acc, gyro have proper sizes 
+            acc_hat = np.reshape(acc_hat, (3, 1))
+            gyro_hat = np.reshape(gyro_hat, (3, 1))
+
+            theta_theta = sp.SO3.exp(-dt * gyro_hat).matrix()
+            JL_plus = Jl_operator(dt * gyro_hat)
+            JL_minus = Jl_operator(-dt * gyro_hat)
+            I3 = np.eye(3)
+            Delta = -(g_skew / (g_norm**2)) @ (theta_theta.T @ (dt * g_skew - I3) + I3)
+            HL_plus = Hl_operator(dt * gyro_hat)
+            HL_minus = Hl_operator(-dt * gyro_hat)
+
+            # prepare the terms in Phi 
+            theta_gyro = -dt * JL_minus
+            v_theta = -dt * wRi @ skew(JL_plus @ acc_hat)
+            v_gyro = wRi @ Delta @ a_skew @ (I3 + (g_skew @ g_skew / (g_norm**2))) + dt * wRi @ JL_plus @ (a_skew @ g_skew / (g_norm**2)) + dt * wRi @ (gyro_hat @ acc_hat.T / (g_norm**2)) @ JL_minus - dt * ((acc_hat.T @ gyro_hat).item() / (g_norm**2)) * I3
+            v_acc = -dt * wRi @ JL_plus
+
+            p_theta = -(dt**2) * wRi @ skew(HL_plus @ acc_hat)
+            p_v = dt * I3
+            p_gyro = wRi @ (-g_skew @ Delta - dt * JL_plus + dt * I3) @ a_skew @ (I3 + (g_skew @ g_skew / (g_norm**2))) @ (g_skew / (g_norm**2)) + (dt**2) * wRi @ HL_plus @ (a_skew @ g_skew / (g_norm**2)) + (dt**2) * wRi @ (gyro_hat @ acc_hat.T / (g_norm**2)) @ HL_minus - (dt**2) * ((acc_hat.T @ gyro_hat).item() / (2*(g_norm**2))) * wRi
+            p_acc = -(dt**2) * wRi @ HL_plus
+
+            # for Phi 
+            Phi = np.eye(15)
+            # theta row 
+            Phi[0:3, 0:3] = theta_theta
+            Phi[0:3, 9:12] = theta_gyro
+            # v row 
+            Phi[3:6, 0:3] = v_theta
+            Phi[3:6, 9:12] = v_gyro
+            Phi[3:6, 12:15] = v_acc
+            # p row 
+            Phi[6:9, 0:3] = p_theta
+            Phi[6:9, 3:6] = p_v
+            Phi[6:9, 9:12] = p_gyro
+            Phi[6:9, 12:15] = p_acc
+
+            # obtain Q 
+            Q = Phi @ self.noise_matrix @ Phi.T * dt
+
+            self.state_server.state_cov[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] = (
+                Phi @ self.state_server.state_cov[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] @ Phi.T + Q)
 
             # Update the imu-camera covariance
             self.state.covariance[0:15, 15:] = (Phi @ self.state.covariance[0:15, 15:])
             self.state.covariance[15:, :15] = (self.state.covariance[15:, :15] @ Phi.T)
 
-            new_cov_symmetric = symmeterize_matrix(new_covariance)
+            new_cov_symmetric = symmeterize_matrix(self.state.covariance)
             self.state.covariance[0:StateInfo.IMU_STATE_SIZE, 0:StateInfo.IMU_STATE_SIZE] = new_cov_symmetric
 
     def update_EKF(self, res, H, R):
@@ -762,30 +705,26 @@ class MSCKF():
         self.state.update_state(delta_x)
 
     def augment_camera_state(self, timestamp):
-        imu_R_global = self.state.imu_JPLQ_global.rotation_matrix()
-        camera_R_imu = self.camera_calib.imu_R_camera.T
+        iRw = self.state.imu_R_global.T
+        cRi = self.camera_calib.imu_R_camera.T
 
         # Compute the pose of the camera in the global frame
-        camera_R_global = camera_R_imu @ imu_R_global
+        cRw = cRi @ iRw
 
-        global_t_imu = self.state.global_t_imu
-        imu_t_camera = self.camera_calib.imu_t_camera
-        global_R_imu = imu_R_global.T
-        global_t_camera = global_t_imu + global_R_imu @ imu_t_camera
-
-        camera_JPLQ_global = JPLQuaternion.from_rot_mat(camera_R_global)
+        wPi = self.state.global_t_imu
+        iPc = self.camera_calib.imu_t_camera
+        wRi = self.state.imu_R_global
+        wPc = wPi + wRi @ iPc
 
         cur_state_size = self.state.get_state_size()
         # This jacobian stores the partial derivatives of the camera position(6 states) with respect to the current
         # state vector
         jac = np.zeros((StateInfo.CLONE_STATE_SIZE, cur_state_size), dtype=np.float64)
-        # Its almost all zeros except for with respect to the current pose(quaternion+position)
-
-        # See A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint Kalman Filter for Vision-Aided Inertial
-        # Navigation," Eq 16
-        jac[StateInfo.CLONE_ATT_SLICE, StateInfo.ATT_SLICE] = camera_R_imu
-        jac[StateInfo.CLONE_POS_SLICE, StateInfo.ATT_SLICE] = skew_matrix(global_R_imu @ imu_t_camera)
-        jac[StateInfo.CLONE_POS_SLICE, StateInfo.POS_SLICE] = np.eye(3)
+        dcampose_dimupose = get_cam_wrt_imu_se3_jacobian(cRi, iPc, cRw)
+        jac[0:3, 0:3] = dcampose_dimupose[0:3, 0:3]
+        jac[0:3, 6:9] = dcampose_dimupose[0:3, 3:6]
+        jac[3:6, 0:3] = dcampose_dimupose[3:6, 0:3]
+        jac[3:6, 6:9] = dcampose_dimupose[3:6, 3:6]
 
         new_state_size = cur_state_size + StateInfo.CLONE_STATE_SIZE
         # See Eq 15 from above reference
@@ -797,76 +736,11 @@ class MSCKF():
         new_cov_sym = symmeterize_matrix(new_covariance)
 
         # Add the camera clone and set the new covariance matrix which includes it
-        camera_JPLPose_global = JPLPose(camera_JPLQ_global, global_t_camera)
         self.camera_id += 1
-        clone = CameraClone(camera_JPLPose_global, self.camera_id)
+        clone = CameraClone(cRw.T, wPc, self.camera_id)
         self.state.add_clone(clone)
         self.state.covariance = new_cov_sym
 
         return self.camera_id
 
-    def compute_F(self, imu):
-        """Computes the transition matrix(F) for the extended kalman filter.
 
-        Args:
-            unbiased_gyro_meas:
-            unbiased_acc_measurement:
-
-        Returns:
-
-            The transition matrix contains the jacobians of our process model with respect to our current state.
-
-            The jacobians for this function can be found in A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint
-            Kalman Filter for Vision-Aided Inertial Navigation", but with a slightly different variable ordering.
-
-        """
-
-        unbiased_gyro_meas = imu.angular_vel - self.state.bias_gyro
-        unbiased_acc_meas = imu.linear_acc - self.state.bias_acc
-
-        F = np.zeros((15, 15), dtype=np.float64)
-
-        imu_SO3_global = self.state.imu_JPLQ_global.rotation_matrix()
-        st = StateInfo
-
-        # This matrix can be found in A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint Kalman Filter for
-        # Vision-Aided Inertial Navigation," but with a slight different row/column ordering.
-        # How to read the indexing. The first index shows the value we are taking the partial derivative of and the
-        # second index is which partial derivative.
-        # E.g F[st.ATTITUDE_SLICE,st.BIAS_GYRO_SLICE] is the partial derivative of the attitude with respect
-        # to the gyro bias.
-        F[st.ATT_SLICE, st.ATT_SLICE] = -skew_matrix(unbiased_gyro_meas)
-        F[st.ATT_SLICE, st.BG_SLICE] = -np.eye(3)
-        F[st.VEL_SLICE, st.ATT_SLICE] = -imu_SO3_global.transpose() @ skew_matrix(unbiased_acc_meas)
-        F[st.VEL_SLICE, st.BA_SLICE] = -imu_SO3_global.transpose()
-        F[st.POS_SLICE, st.VEL_SLICE] = np.eye(3)
-        return F
-
-    def compute_G(self):
-        """ Computes the system matrix with respect to the control input.
-
-        Returns:
-            A numpy matrix(15x12) containing the jacobians with respect to the system input.
-
-        This matrix contains the jacobians of our process model with respect to the system input.
-
-
-        The jacobians for this function can be found in A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint
-        Kalman Filter for Vision-Aided Inertial Navigation", but with a slightly different variable ordering.
-
-        """
-
-        G = np.zeros((15, 12), dtype=np.float64)
-        imu_SO3_global = self.state.imu_JPLQ_global.rotation_matrix()
-        st = StateInfo
-
-        # This matrix can be found in A.I. Mourikis, S.I. Roumeliotis: "A Multi-state Constraint Kalman Filter for
-        # Vision-Aided Inertial Navigation," but with a slightly different row/column ordering.
-
-        # order of noise: gyro_m , acc_m , gyro_b, acc_b
-        G[st.ATT_SLICE, 0:3] = -np.eye(3)
-        G[st.BG_SLICE, 6:9] = np.eye(3)
-        G[st.VEL_SLICE, 3:6] = -imu_SO3_global.T
-        G[st.BA_SLICE, 9:12] = np.eye(3)
-
-        return G

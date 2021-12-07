@@ -10,15 +10,15 @@ from src.spatial_transformations import JPLPose
 MEASUREMENT_SIZE = 2
 
 
-def linear_triangulate(camera_JPLPoses_world, normalized_features, min_dist=0.1, max_condition_num=10000):
+def linear_triangulate(camera_poses_world, normalized_features, min_dist=0.1, max_condition_num=10000):
     """Triangulate a point with the linear triangulation method(DLT).
 
     Args:
-        camera_JPLPoses_world: List of the JPL camera poses.
+        camera_poses_world: List of the SE(3) camera poses.
         normalized_features: Observations of 3D point in normalized keypoint coordinates(u,v,1.0)
         min_dist: The minimum distance a point must be from a camera. Used as a validity check on the triangulated
             point. From most normal use cases(pinhole camera) we know that it is impossible for a 3D point to be behind
-            a camera (Z is negative). By increasing the 'min_dist' >0 we are making the check even stricter.
+            a camera (Z is negative). By increasing the 'min_dist' > 0 we are making the check even stricter.
         max_condition_num: The maximum allowed condition number of our linear system. The condition number describes
             how well our linear system constrains the problem. (E.g camera with 0 displacement between them can't
             triangulate a point. and thus will have a high condition number). The equation to compute it is
@@ -44,27 +44,27 @@ def linear_triangulate(camera_JPLPoses_world, normalized_features, min_dist=0.1,
     We also implement some basic validity checking such as ensuring that the point is some distance in front of all the
     cameras, and that our linear system is well conditioned.
     """
-    assert (len(camera_JPLPoses_world) >= 2)
-    assert (len(camera_JPLPoses_world) == len(normalized_features))
+    assert (len(camera_poses_world) >= 2)
+    assert (len(camera_poses_world) == len(normalized_features))
 
-    num_measurements = len(camera_JPLPoses_world)
+    num_measurements = len(camera_poses_world)
 
     # Our linear system matrix Ax=b
     A = np.empty((2 * num_measurements, 3), dtype=np.float64)
     b = np.empty((2 * num_measurements), dtype=np.float64)
 
-    for idx, (pose, feature) in enumerate(zip(camera_JPLPoses_world, normalized_features)):
-        camera_R_world = pose.quaternion().rotation_matrix()
-        world_t_camera = pose.t
-        camera_t_world = -camera_R_world @ world_t_camera
+    for idx, (pose, feature) in enumerate(zip(camera_poses_world, normalized_features)):
+        cRw = pose.R.T
+        wPc = pose.t
+        cPw = -cRw @ wPc
         u = feature[0]
         v = feature[1]
 
-        A[MEASUREMENT_SIZE * idx + 0] = u * camera_R_world[2] - camera_R_world[0]
-        A[MEASUREMENT_SIZE * idx + 1] = v * camera_R_world[2] - camera_R_world[1]
+        A[MEASUREMENT_SIZE * idx + 0] = u * cRw[2] - cRw[0]
+        A[MEASUREMENT_SIZE * idx + 1] = v * cRw[2] - cRw[1]
 
-        b[MEASUREMENT_SIZE * idx + 0] = -(u * camera_t_world[2] - camera_t_world[0])
-        b[MEASUREMENT_SIZE * idx + 1] = -(v * camera_t_world[2] - camera_t_world[1])
+        b[MEASUREMENT_SIZE * idx + 0] = -(u * cPw[2] - cPw[0])
+        b[MEASUREMENT_SIZE * idx + 1] = -(v * cPw[2] - cPw[1])
 
     # Solve our linear system(Ax=b) for x which is our triangulated point.
     result = np.linalg.lstsq(A, b, rcond=None)
@@ -77,11 +77,11 @@ def linear_triangulate(camera_JPLPoses_world, normalized_features, min_dist=0.1,
         return False, triangulated_point
 
     # Check that the triangulated point is in front of all the cameras by some distance.
-    for pose in camera_JPLPoses_world:
-        camera_R_world = pose.quaternion().rotation_matrix()
-        world_t_camera = pose.t
-        camera_t_world = -camera_R_world @ world_t_camera
-        transformed_pt = camera_R_world @ triangulated_point + camera_t_world
+    for pose in camera_poses_world:
+        cRw = pose.R.T
+        wPc = pose.t
+        camera_t_world = -cRw @ wPc
+        transformed_pt = cRw @ triangulated_point + camera_t_world
         if (transformed_pt[2] <= min_dist):
             return False, triangulated_point
 
@@ -89,7 +89,7 @@ def linear_triangulate(camera_JPLPoses_world, normalized_features, min_dist=0.1,
 
 
 def convert_point3d_to_inverse_depth(pt3d):
-    """ Convert a point into the inverse depth/msckf format.
+    """ Convert a point into the inverse depth format.
 
     Args:
         pt3d: A point in 3D coordinates(X,Y,Z)
@@ -120,12 +120,12 @@ def convert_inverse_depth_to_point3d(inverse_depth_pt):
     return np.array([inverse_depth_pt[0] / rho, inverse_depth_pt[1] / rho, 1.0 / rho])
 
 
-def compute_error_and_jacobian(inverse_depth_pt, camera_JPLPose_world, measurement, compute_jacobian=False):
+def compute_error_and_jacobian(inverse_depth_pt, camera_pose_world, measurement, compute_jacobian=False):
     """Given a point, a camera pose, and a feature measurement compute the error and jacobian.
 
     Args:
         inverse_depth_pt: Landmark in inverse depth format(alpha,beta,rho).
-        camera_pose_JPL: Camera pose in JPL convention.
+        camera_pose_world: Camera pose in SE(3).
         measurement: Measurement of the landmark in normalized camera coordinates.
         compute_jacobian: Flag whether to compute the jacobian.
 
@@ -139,18 +139,18 @@ def compute_error_and_jacobian(inverse_depth_pt, camera_JPLPose_world, measureme
     beta = inverse_depth_pt[1]
     rho = inverse_depth_pt[2]
 
-    camera_R_world = camera_JPLPose_world.q.rotation_matrix()
-    world_t_camera = camera_JPLPose_world.t
-    camera_t_world = -camera_R_world @ world_t_camera
+    cRw = camera_pose_world.R.T
+    wPc = camera_pose_world.t
+    cPw = -cRw @ wPc
 
-    h = camera_R_world @ np.array([alpha, beta, 1.0]) + (rho * camera_t_world)
+    h = cRw @ np.array([alpha, beta, 1.0]) + (rho * cPw)
 
     projected_pt = np.array([h[0] / h[2], h[1] / h[2]])
     reprojection_error = projected_pt - measurement[0:2]
 
     W = np.zeros((3, 3))
-    W[:, 0:2] = camera_R_world[:, 0:2]
-    W[:, 2] = camera_t_world
+    W[:, 0:2] = cRw[:, 0:2]
+    W[:, 2] = cPw
 
     if (compute_jacobian):
         jac = np.empty((2, 3))
@@ -160,54 +160,12 @@ def compute_error_and_jacobian(inverse_depth_pt, camera_JPLPose_world, measureme
     else:
         return reprojection_error
 
-
-def compute_error_and_jacobian(inverse_depth_pt, camera_JPLPose_world, measurement, compute_jacobian=False):
-    """Given a point, a camera pose, and a feature measurement compute the error and jacobian.
-
-    Args:
-        inverse_depth_pt: Landmark in inverse depth format(alpha,beta,rho).
-        camera_pose_JPL: Camera pose in JPL convention.
-        measurement: Measurement of the landmark in normalized camera coordinates.
-        compute_jacobian: Flag whether to compute the jacobian.
-
-    Returns:
-
-    The equations for this function can be found in T. Hinzmann, "Robust Vision-Based Navigation for Micro Air
-     Vehicles" and also contains the jacobians.
-
-    """
-    alpha = inverse_depth_pt[0]
-    beta = inverse_depth_pt[1]
-    rho = inverse_depth_pt[2]
-
-    camera_R_world = camera_JPLPose_world.q.rotation_matrix()
-    world_t_camera = camera_JPLPose_world.t
-    camera_t_world = -camera_R_world @ world_t_camera
-
-    h = camera_R_world @ np.array([alpha, beta, 1.0]) + (rho * camera_t_world)
-
-    projected_pt = np.array([h[0] / h[2], h[1] / h[2]])
-    reprojection_error = projected_pt - measurement[0:2]
-
-    W = np.zeros((3, 3))
-    W[:, 0:2] = camera_R_world[:, 0:2]
-    W[:, 2] = camera_t_world
-
-    if (compute_jacobian):
-        jac = np.empty((2, 3))
-        jac[0] = 1.0 / h[2] * W[0] - h[0] / (h[2]**2) * W[2]
-        jac[1] = 1.0 / h[2] * W[1] - h[1] / (h[2]**2) * W[2]
-        return reprojection_error, jac
-    else:
-        return reprojection_error
-
-
-def model(estimated_inverse_depth_pt, camera_JPLPoses_world, measurements):
+def model(estimated_inverse_depth_pt, camera_poses_world, measurements):
     """Model function for scipy optimizer which triangulates a 3D point.
 
     Args:
         estimated_inverse_depth_pt: Current estimate of landmark in the inverse depth format.
-        camera_JPLPoses_world: List of camera poses that observed this Landmark in JPL format.
+        camera_poses_world: List of camera poses that observed this Landmark in SE(3).
         measurements: List of normalized keypoint measurement. Same length as 'camera_JPLPoses_world'
 
     Returns:
@@ -216,43 +174,42 @@ def model(estimated_inverse_depth_pt, camera_JPLPoses_world, measurements):
     This function is used in conjunction with scipy's least squares optimizer. It computes the error of the given
     estimate.
     """
-    assert (len(camera_JPLPoses_world) == len(measurements))
+    assert (len(camera_poses_world) == len(measurements))
     residuals = np.empty(len(measurements) * 2)
-    for idx, (jpl_pose, measurement) in enumerate(zip(camera_JPLPoses_world, measurements)):
-        error = compute_error_and_jacobian(estimated_inverse_depth_pt, jpl_pose, measurement, False)
+    for idx, (pose, measurement) in enumerate(zip(camera_poses_world, measurements)):
+        error = compute_error_and_jacobian(estimated_inverse_depth_pt, pose, measurement, False)
         residuals[idx * 2 + 0] = error[0]
         residuals[idx * 2 + 1] = error[1]
     return residuals
 
 
-def compute_jacobian_scipy(estimated_inverse_depth_pt, camera_JPLPoses_world, measurements):
+def compute_jacobian_scipy(estimated_inverse_depth_pt, camera_poses_world, measurements):
     """Function to compute jacobians of triangulating a 3D point. Meant to be used with scipy optimizer.
 
     Args:
         estimated_inverse_depth_pt: Current estimate of landmark in the inverse depth format.
-        camera_JPLPoses_world: List of camera poses that observed this Landmark in JPL format.
-        measurements: List of normalized keypoint measurement. Same length as 'camera_JPLPoses_world'
+        camera_poses_world: List of camera poses that observed this Landmark.
+        measurements: List of normalized keypoint measurement. Same length as 'camera_poses_world'
 
     Returns:
         Numpy array representing the jacobians. Should be of size len(measurements)*2 x 3.
 
     """
     jac = np.empty((len(measurements) * 2, 3))
-    for idx, (jpl_pose, measurement) in enumerate(zip(camera_JPLPoses_world, measurements)):
-        _, jac_i = compute_error_and_jacobian(estimated_inverse_depth_pt, jpl_pose, measurement, True)
+    for idx, (pose, measurement) in enumerate(zip(camera_poses_world, measurements)):
+        _, jac_i = compute_error_and_jacobian(estimated_inverse_depth_pt, pose, measurement, True)
         index = idx * 2
         jac[index:index + 2] = jac_i
     return jac
 
 
-def optimize_point_location(initial_pt3d, camera_JPLPoses_world, normalized_features, use_scipy_levenberg=False):
+def optimize_point_location(initial_pt3d, camera_poses_world, normalized_features):
     """Optimizes the point location using a non linear least squares optimizer.
 
     Args:
         initial_pt3d: Initial estimate of the point location in 3D.
-        camera_JPLPoses_world: List of camera poses that observed this Landmark in JPL format.
-        normalized_features: List of normalized keypoint measurement. Same length as 'camera_JPLPoses_world'
-        use_scipy_levenberg: CURRENTLY IGNORED
+        camera_poses_world: List of camera poses that observed this Landmark 
+        normalized_features: List of normalized keypoint measurement. Same length as 'camera_poses_world'
 
     Returns:
         boolean value: True on success, else False
@@ -266,11 +223,8 @@ def optimize_point_location(initial_pt3d, camera_JPLPoses_world, normalized_feat
     result = least_squares(model,
                            inverse_depth_pt,
                            jac=compute_jacobian_scipy,
-                           args=(camera_JPLPoses_world, normalized_features),
+                           args=(camera_poses_world, normalized_features),
                            verbose=0)
 
     return result.success, convert_inverse_depth_to_point3d(result.x)
 
-
-def optimize_custom_levenberg_marquadt():
-    pass

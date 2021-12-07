@@ -6,7 +6,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from src.math_utilities import skew_matrix
+from src.math_utilities import skew
 from src.params import AlgorithmConfig
 
 logger = logging.getLogger(__name__)
@@ -39,8 +39,8 @@ def draw_tracks(img, prev_points, cur_points):
 
 
 # def estimate_via_linalg(prev_point_1,cur_point_1,prev_point_2,cur_point_2,rot):
-#     row1 = (R @ prev_point_1).transpose() @ skew_matrix(cur_point_1)
-#     row2 = (R @ prev_point_2).transpose() @ skew_matrix(cur_point_2)
+#     row1 = (R @ prev_point_1).transpose() @ skew(cur_point_1)
+#     row2 = (R @ prev_point_2).transpose() @ skew(cur_point_2)
 #
 #     A = np.vstack(row1,row2)
 #
@@ -191,7 +191,7 @@ def rotation_vector_to_matrix(rot_vec):
     c = np.cos(theta)
     cs = 1.0 - np.cos(theta)
 
-    w_x = skew_matrix(r)
+    w_x = skew(r)
 
     I = np.eye(3, dtype=np.float64)
 
@@ -231,7 +231,7 @@ def compute_rotation_from_imu_measurements2(imu_measurements):
 
         w1 = np.linalg.norm(wm)
         wdt = w1 * dt
-        wx = skew_matrix(wm)
+        wx = skew(wm)
         wx2 = wx @ wx
 
         deltaR = np.eye(3)
@@ -247,7 +247,7 @@ def compute_rotation_from_imu_measurements2(imu_measurements):
     # mag2 = mag**2
     # wdt = w*dt
     #
-    # skew_w = skew_matrix(w)
+    # skew_w = skew(w)
     # skew_w2 = skew_w@skew_w
     #
     # dt2 = dt**2
@@ -307,7 +307,7 @@ def run_two_pt_ransac(prev_points, cur_points, num_iterations, inlier_threshold,
         cur_t_prev = compute_two_point_translation(cur_point_1, prev_point_1, cur_point_2, prev_point_2, cur_R_prev)
 
         # Build the essential matrix.
-        cur_E_prev = skew_matrix(cur_t_prev) * cur_R_prev
+        cur_E_prev = skew(cur_t_prev) * cur_R_prev
 
         # For every point pair compute the error given their locations and the computed essential matrix.
         if use_sampson_error:

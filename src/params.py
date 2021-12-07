@@ -101,61 +101,7 @@ class AlgorithmConfig():
         min_dist_between_keypoints = 10
 
     @dataclass
-    class MSCKFParams():
-        class StateTransitionIntegrationMethod(Enum):
-            """ Enum which contains different ways to compute the state transition matrix.
-
-            Given a dynamical linear system:
-
-                x_dot = A * x
-
-            * x_dot is derivative
-            * A is a matrix representing our linear system transition
-            * x is our state
-
-            By integrating over our time interval we get the following solution.
-
-                x_n+1 = e^(A*delta_t)*x_n
-
-            Where e is the matrix exponent.
-
-            e^(A*delta_t) is typically represented with the symbol Phi, and is called the State transition matrix.
-
-            We can just use the matrix exponential solution, and call it a day, but it can be quite expensive to
-             compute. Thus we may want to use a different integration method to compute/approximate the state
-             transition matrix.
-
-            Note also that in our case since we are using an EKF, instead of A we used a linearized approximation
-             called F.
-
-            Euler:
-                Simplest and quickest. Simply multiply the transition matrix by the time interval.
-
-            truncation_3rd_order:
-                truncation is an integration scheme with varying levels of accuracy depending on the order. An overview
-                 of this method can be found in "Quaternion kinematics for the error-state Kalman filter" by Joan Sola
-                 in Appendix C.
-
-            matrix_exponent:
-
-            """
-            Euler = auto()
-            truncation_3rd_order = auto()  # Euler integration
-            matrix_exponent = auto()  # Matrix exponential
-
-        class TransitionMatrixModel(Enum):
-            """ Enum which controls how we choose to model the dynamical system, and therefore what our covariance propogation
-            equations should be.
-
-            We have 2 parts to our propogation equation.
-             1. The state evolution of the dynamical system
-             2. The measurements/inputs which contribute to the state evolution.
-
-            For both cases we must choose how we want to model them(either as discrete or continous)
-            """
-            discrete = auto()
-            continous_discrete = auto()
-
+    class ORCVIOParams():
         # The maximum number of clones a track can have, before it must be used for an update.
         max_track_length = 20
 
@@ -174,11 +120,8 @@ class AlgorithmConfig():
         # it makes subsequent operations such as computing the Kalman Gain much more efficient.
         use_QR_compression = True
 
-        transition_matrix_method = TransitionMatrixModel.discrete
-        state_transition_integration = StateTransitionIntegrationMethod.truncation_3rd_order
-
     feature_tracker_params: FeatureTrackerParams = FeatureTrackerParams()
-    msckf_params: MSCKFParams = MSCKFParams()
+    msckf_params: ORCVIOParams = ORCVIOParams()
 
 
 @dataclass()

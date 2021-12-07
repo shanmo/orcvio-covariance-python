@@ -8,8 +8,8 @@ import numpy as np
 
 from src.dataset_utils import TimestampSynchronizer, csv_read_matrix
 from src.feature_tracker import FeatureTracker
-from src.msckf import MSCKF
-from src.msckf_types import CameraCalibration, IMUData, PinholeIntrinsics
+from src.orcvio import ORCVIO
+from src.orcvio_types import CameraCalibration, IMUData, PinholeIntrinsics
 from src.params import AlgorithmConfig, EurocDatasetCalibrationParams
 from src.spatial_transformations import hamiltonian_quaternion_to_rot_matrix
 from src.viewer import create_and_run
@@ -21,7 +21,8 @@ RIGHT_CAMERA_FOLDER = "cam1"
 IMU_FOLDER = "imu0"
 GT_FOLDER = "state_groundtruth_estimate0"
 DATA_FILE = "data.csv"
-RESULT_FILE = "./cache/msckf/"
+# RESULT_FILE = "./cache/msckf/"
+RESULT_FILE = "./cache/orcvio/"
 
 TIMESTAMP_INDEX = 0
 NANOSECOND_TO_SECOND = 1e-9
@@ -58,9 +59,9 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
     config = AlgorithmConfig()
     feature_tracker = FeatureTracker(config.feature_tracker_params, camera_calib)
 
-    msckf = MSCKF(config.msckf_params, camera_calib)
-    msckf.set_imu_noise(0.005, 0.05, 0.001, 0.01)
-    msckf.set_imu_covariance(1e-5, 1e-12, 1e-2, 1e-2, 1e-2)
+    orcvio = ORCVIO(config.orcvio_params, camera_calib)
+    orcvio.set_imu_noise(0.005, 0.05, 0.001, 0.01)
+    orcvio.set_imu_covariance(1e-5, 1e-12, 1e-2, 1e-2, 1e-2)
 
     imu_data = csv_read_matrix(os.path.join(euroc_folder, IMU_FOLDER, DATA_FILE))
     camera_data = csv_read_matrix(os.path.join(euroc_folder, LEFT_CAMERA_FOLDER, DATA_FILE))
@@ -126,22 +127,22 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
                 gt_bias_gyro = gt[10:13]
                 gt_bias_acc = gt[13:16]
                 gt_rot_matrx = hamiltonian_quaternion_to_rot_matrix(gt_quat)
-                msckf.initialize(gt_rot_matrx, gt_pos, gt_vel, gt_bias_acc, gt_bias_gyro)
+                orcvio.initialize(gt_rot_matrx, gt_pos, gt_vel, gt_bias_acc, gt_bias_gyro)
                 first_time = False
                 continue
 
-            msckf.propogate(imu_buffer)
-            msckf.add_camera_features(ids, measurements)
-            est_rot_mat = msckf.state.imu_JPLQ_global.rotation_matrix().T
-            est_trans = msckf.state.global_t_imu
+            orcvio.propogate(imu_buffer)
+            orcvio.add_camera_features(ids, measurements)
+            est_rot_mat = orcvio.state.imu_R_global
+            est_trans = orcvio.state.global_t_imu
             est_pose = np.eye(4, dtype=np.float32)
             est_pose[0:3, 0:3] = est_rot_mat
             est_pose[0:3, 3] = est_trans
             if est_pose_queue:
                 est_pose_queue.put(est_pose)
             # for covariance analysis 
-            covariance_queue.append(msckf.state.get_pos_covariance())
-            msckf.remove_old_clones()
+            covariance_queue.append(orcvio.state.get_pos_covariance())
+            orcvio.remove_old_clones()
             imu_buffer.clear()
 
             if ground_truth_queue and "gt" in cur_data:

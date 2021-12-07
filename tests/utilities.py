@@ -55,3 +55,29 @@ def compute_3x4_mat(rotation, translation):
     t[0:3, 0:3] = rotation
     t[0:3, 3] = translation
     return t
+
+def to_quaternion(R):
+    """
+    Convert a rotation matrix to a quaternion.
+    Pay attention to the convention used. The function follows the
+    conversion in "Indirect Kalman Filter for 3D Attitude Estimation:
+    A Tutorial for Quaternion Algebra", Equation (78).
+    The input quaternion should be in the form [q1, q2, q3, q4(scalar)]
+    """
+    if R[2, 2] < 0:
+        if R[0, 0] > R[1, 1]:
+            t = 1 + R[0,0] - R[1,1] - R[2,2]
+            q = [t, R[0, 1]+R[1, 0], R[2, 0]+R[0, 2], R[1, 2]-R[2, 1]]
+        else:
+            t = 1 - R[0,0] + R[1,1] - R[2,2]
+            q = [R[0, 1]+R[1, 0], t, R[2, 1]+R[1, 2], R[2, 0]-R[0, 2]]
+    else:
+        if R[0, 0] < -R[1, 1]:
+            t = 1 - R[0,0] - R[1,1] + R[2,2]
+            q = [R[0, 2]+R[2, 0], R[2, 1]+R[1, 2], t, R[0, 1]-R[1, 0]]
+        else:
+            t = 1 + R[0,0] + R[1,1] + R[2,2]
+            q = [R[1, 2]-R[2, 1], R[2, 0]-R[0, 2], R[0, 1]-R[1, 0], t]
+
+    q = np.array(q) # * 0.5 / np.sqrt(t)
+    return q / np.linalg.norm(q)

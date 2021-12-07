@@ -12,7 +12,8 @@ plt.rc('ytick', labelsize=MEDIUM_SIZE)    # fontsize of the tick labels
 plt.rc('legend', fontsize=BIGGER_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
-RESULT_FILE = "./cache/msckf/"
+MSCKF_RESULT_FILE = "./cache/msckf/"
+ORCVIO_RESULT_FILE = "./cache/orcvio/"
 
 def get_cov_3c(covariances):
     """Obtain x, y, z axis 3 sigma bounds from covariance 
@@ -26,7 +27,7 @@ def get_cov_3c(covariances):
 if __name__ == "__main__": 
 
     file_name = 'msckf_covariances.npz'
-    with np.load(RESULT_FILE + file_name) as data:
+    with np.load(MSCKF_RESULT_FILE + file_name) as data:
         covariances = data['arr_0']
     x_3c, y_3c, z_3c = get_cov_3c(covariances)
     

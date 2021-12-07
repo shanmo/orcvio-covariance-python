@@ -1,11 +1,13 @@
 ## about 
 
-This repo is developed for analyzing the covariance for [OrcVIO](https://moshan.cf/orcvio_githubpage/)
+This repo implements the mono version of [OrcVIO](https://moshan.cf/orcvio_githubpage/), and is developed for analyzing its covariance.
 
 ## environment setup 
 
 - platform `ubuntu 18.04` 
 - using conda `conda env create --file environment.yml`
+- install pip packages 
+   * `pip install sophuspy` 
 
 ## EuRoC demo 
 
