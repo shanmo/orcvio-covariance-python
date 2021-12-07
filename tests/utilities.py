@@ -1,9 +1,13 @@
 import numpy as np
-from transforms3d.euler import euler2mat
 
-from src.spatial_transformations import JPLPose, JPLQuaternion
-from src.triangulation import linear_triangulate, optimize_point_location
+def project_point_pose(pose, point_in_world):
 
+    cRw = pose.R.T
+    wPc = pose.t
+
+    pt_in_camera = cRw @ (point_in_world - wPc)
+
+    return pt_in_camera / pt_in_camera[2]
 
 def invert_pose(pose):
     new_rot = pose[0:3, 0:3].T
@@ -31,17 +35,6 @@ def compute_relative_trans12(world_SE3_apple, world_SE3_banana):
     world_R_apple = world_SE3_apple[0:3, 0:3]
     apple_R_world = world_R_apple.T
     return apple_R_world @ (-t_apple + t_banana)
-
-
-def project_point_jpl_pose(pose_jpl, point_in_world):
-
-    camera_R_world = pose_jpl.q.rotation_matrix()
-    world_t_camera = pose_jpl.t
-
-    pt_in_camera = camera_R_world @ (point_in_world - world_t_camera)
-
-    return pt_in_camera / pt_in_camera[2]
-
 
 def project_point(world_SE3_camera, pt_in_world):
     camera_SE3_world = invert_pose(world_SE3_camera)

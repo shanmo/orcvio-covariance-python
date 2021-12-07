@@ -45,7 +45,7 @@ def test_orcvio_imu_integration():
     imu_buffer = []
     imu_buffer.append(data)
 
-    orcvio.propogate(imu_buffer)
+    orcvio.propagate(imu_buffer)
 
     expected_translation_x = linear_acceleration * dt**2 / 2
     expected_velocity_x = linear_acceleration * dt
@@ -63,7 +63,7 @@ def test_orcvio_imu_integration():
 
     imu_buffer.append(data)
 
-    orcvio.propogate(imu_buffer)
+    orcvio.propagate(imu_buffer)
 
     new_x = expected_translation_x + expected_velocity_x * dt + linear_acceleration * dt**2 / 2
 
@@ -214,3 +214,10 @@ def test_residual_and_jacobian():
     print(after_update)
 
     assert (np.allclose(before_update, after_update))
+
+if __name__ == "__main__": 
+    test_orcvio_imu_integration()
+    test_constant_angular_velocity()
+    test_state_augmentation()
+    test_state_augmentation_non_origin()
+    test_residual_and_jacobian()

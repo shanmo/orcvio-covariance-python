@@ -131,7 +131,7 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
                 first_time = False
                 continue
 
-            orcvio.propogate(imu_buffer)
+            orcvio.propagate(imu_buffer)
             orcvio.add_camera_features(ids, measurements)
             est_rot_mat = orcvio.state.imu_R_global
             est_trans = orcvio.state.global_t_imu

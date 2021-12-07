@@ -2,12 +2,12 @@ import numpy as np
 from transforms3d.euler import euler2mat
 
 from src.feature_tracker import (compute_algebraic_error, compute_two_point_translation, run_two_pt_ransac)
-from src.math_utilities import skew_matrix
+from src.math_utilities import skew
 from tests.utilities import (compute_3x4_mat, compute_relative_rot12, compute_relative_trans12, project_point)
 
 
 def create_essential(rot, trans):
-    return skew_matrix(trans) @ rot
+    return skew(trans) @ rot
 
 
 def generate_2_frame_data(num_points=10):
@@ -95,10 +95,13 @@ def test_ransac():
 
     A_R_B = compute_relative_rot12(T_A, T_B)
 
-    A_t_B = compute_relative_trans12(T_A, T_B)
-
     measurements_A = projected_points[0]
     measurements_B = projected_points[1]
 
     inliers = run_two_pt_ransac(measurements_A, measurements_B, 200, 0.5, A_R_B.T)
     print(inliers)
+
+if __name__ == "__main__": 
+    test_essential_error()
+    test_estimated_translation_and_essential()
+    test_ransac()

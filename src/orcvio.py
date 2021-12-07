@@ -9,6 +9,7 @@ import numpy as np
 import scipy
 from scipy.stats import chi2
 
+from src.spatial_transformations import Isometry3d
 from src.math_utilities import skew, symmeterize_matrix, odotOperator, Hl_operator, Jl_operator, get_cam_wrt_imu_se3_jacobian
 from src.orcvio_types import FeatureTrack
 from src.triangulation import linear_triangulate, optimize_point_location
@@ -38,8 +39,7 @@ class StateInfo():
 
 class CameraClone():
     def __init__(self, R, t, camera_id):
-        self.camera_pose_global.R = R 
-        self.camera_pose_global.t = t
+        self.camera_pose_global = Isometry3d(R, t)
         self.timestamp = 0
         self.camera_id = camera_id
 
@@ -134,7 +134,7 @@ class State():
     def get_pos_covariance(self): 
         """Obtain the covariance for position 
         """
-        return np.copy(self.covariance[3:6, 3:6])
+        return np.copy(self.covariance[StateInfo.POS_SLICE, StateInfo.POS_SLICE])
 
 class ORCVIO():
     """ Implements the ORCVIO.
@@ -581,7 +581,7 @@ class ORCVIO():
         self.state.global_t_imu = p_new
         self.state.velocity = v_new
 
-    def propogate(self, imu_buffer):
+    def propagate(self, imu_buffer):
         for imu in imu_buffer:
             # prepare the basic terms 
             wRi = self.state.imu_R_global
