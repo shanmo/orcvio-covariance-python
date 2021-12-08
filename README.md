@@ -26,7 +26,7 @@ python ./tests/test_twopoint_ransac.py
 ```
 python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav0 --use_viewer --start_timestamp 1403636896901666560
 ```
-- result 
+- result, green is groundtruth trajectory, red is the estimated trajectory from OrcVIO-Mono 
 ![demo](assets/demo.gif)
 - covariance analysis 
 > From figure below we can see MSCKF is making overconfident estimations whereas OrcVIO does not, due to the closed-form covariance propagation 
