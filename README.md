@@ -1,6 +1,7 @@
 ## about 
 
-This repo implements the mono version of [OrcVIO](https://moshan.cf/orcvio_githubpage/), and is developed for analyzing its covariance.
+- this repo implements the mono version of [OrcVIO](https://moshan.cf/orcvio_githubpage/), and is developed for analyzing its covariance. 
+- the original msckf is in the `msckf` branch 
 
 ## environment setup 
 
