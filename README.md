@@ -30,7 +30,7 @@ python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav
 > Green is groundtruth trajectory, red is the estimated trajectory from OrcVIO-Mono 
 ![demo](assets/demo.gif)
 - covariance analysis 
-> From figure below we can see MSCKF is making overconfident estimations whereas OrcVIO does not, due to the closed-form covariance propagation 
+> From figure below we can see MSCKF is making overconfident estimations whereas OrcVIO does not, due to the closed-form covariance propagation. The results are similar to similar to Fig 6, 8 in [Camera-IMU-based localization: Observability analysis and consistency improvement](http://heschian.io/_files/Joel_Hesch_IJRR14.pdf) 
 ![demo](assets/cov-euroc.png)
 
 ## references 
