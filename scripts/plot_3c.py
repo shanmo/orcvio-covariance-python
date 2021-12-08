@@ -26,6 +26,7 @@ def get_cov_3c(covariances):
 
 if __name__ == "__main__": 
 
+    # for msckf 
     file_name = 'msckf_covariances.npz'
     with np.load(MSCKF_RESULT_FILE + file_name) as data:
         covariances = data['arr_0']
@@ -34,22 +35,37 @@ if __name__ == "__main__":
     n = len(covariances)
 
     f, (ax1, ax2, ax3) = plt.subplots(1, 3, sharey=True)
-    ax1.plot(np.arange(n), x_3c, label='MSCKF', linestyle='dashed', linewidth=1.5, color='blue')
-    ax1.plot(np.arange(n), [-x for x in x_3c], linestyle='dashed', linewidth=1.5, color='blue')
+    ax1.plot(np.arange(n), x_3c, label='MSCKF', linestyle='dashed', linewidth=3, color='blue')
+    ax1.plot(np.arange(n), [-x for x in x_3c], linestyle='dashed', linewidth=3, color='blue')
     ax1.set_title('x-axis 3c bounds')
-    ax1.legend(loc="upper right")
-
-    ax2.plot(np.arange(n), y_3c, label='MSCKF', linestyle='dashed', linewidth=1.5, color='blue')
-    ax2.plot(np.arange(n), [-x for x in y_3c], linestyle='dashed', linewidth=1.5, color='blue')
+    
+    ax2.plot(np.arange(n), y_3c, label='MSCKF', linestyle='dashed', linewidth=3, color='blue')
+    ax2.plot(np.arange(n), [-x for x in y_3c], linestyle='dashed', linewidth=3, color='blue')
     ax2.set_title('y-axis 3c bounds')
-    ax2.legend(loc="upper right")
 
-    ax3.plot(np.arange(n), z_3c, label='MSCKF', linestyle='dashed', linewidth=1.5, color='blue')
-    ax3.plot(np.arange(n), [-x for x in z_3c], linestyle='dashed', linewidth=1.5, color='blue')
+    ax3.plot(np.arange(n), z_3c, label='MSCKF', linestyle='dashed', linewidth=3, color='blue')
+    ax3.plot(np.arange(n), [-x for x in z_3c], linestyle='dashed', linewidth=3, color='blue')
     ax3.set_title('z-axis 3c bounds')
-    ax3.legend(loc="upper right")
 
     for ax in (ax1, ax2, ax3):
         ax.set(xlabel='Frame', ylabel='Meters')
+
+    # for orcvio 
+    file_name = 'orcvio_covariances.npz'
+    with np.load(ORCVIO_RESULT_FILE + file_name) as data:
+        covariances = data['arr_0']
+    x_3c, y_3c, z_3c = get_cov_3c(covariances)
+
+    ax1.plot(np.arange(n), x_3c, label='OrcVIO', linestyle='solid', linewidth=3, color='red')
+    ax1.plot(np.arange(n), [-x for x in x_3c], linestyle='solid', linewidth=3, color='red')
+    ax1.legend(loc="upper left")
+
+    ax2.plot(np.arange(n), y_3c, label='OrcVIO', linestyle='solid', linewidth=3, color='red')
+    ax2.plot(np.arange(n), [-x for x in y_3c], linestyle='solid', linewidth=3, color='red')
+    ax2.legend(loc="upper left")
+
+    ax3.plot(np.arange(n), z_3c, label='OrcVIO', linestyle='solid', linewidth=3, color='red')
+    ax3.plot(np.arange(n), [-x for x in z_3c], linestyle='solid', linewidth=3, color='red')
+    ax3.legend(loc="upper left")
 
     plt.show()

@@ -28,6 +28,9 @@ python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav
 ```
 - result 
 ![demo](assets/orcvio-mono-euroc.gif)
+- covariance analysis 
+> From figure below we can see MSCKF is making overconfident estimations whereas OrcVIO does not, due to the closed-form covariance propagation 
+![demo](assets/cov-euroc.png)
 
 ## references 
 
