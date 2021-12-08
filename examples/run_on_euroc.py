@@ -61,7 +61,7 @@ def run_on_euroc(euroc_folder, start_timestamp, use_viewer, log_level):
 
     orcvio = ORCVIO(config.orcvio_params, camera_calib)
     orcvio.set_imu_noise(0.005, 0.05, 0.001, 0.01)
-    orcvio.set_imu_covariance(1e-5, 1e-12, 1e-2, 1e-2, 1e-2)
+    orcvio.set_imu_covariance(1e-5, 1e-2, 1e-12, 1e-2, 1e-2)
 
     imu_data = csv_read_matrix(os.path.join(euroc_folder, IMU_FOLDER, DATA_FILE))
     camera_data = csv_read_matrix(os.path.join(euroc_folder, LEFT_CAMERA_FOLDER, DATA_FILE))

@@ -26,6 +26,8 @@ python ./tests/test_twopoint_ransac.py
 ```
 python ./examples/run_on_euroc.py --euroc_folder /mnt/disk2/euroc/MH_02_easy/mav0 --use_viewer --start_timestamp 1403636896901666560
 ```
+- result 
+![demo](assets/orcvio-mono-euroc.gif)
 
 ## references 
 
